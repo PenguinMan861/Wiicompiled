@@ -1,0 +1,68 @@
+# tvOS feasibility probe for WiiCompiled's runtime (Aurora + SDL3 + Dawn).
+#
+# Mirrors the repo's own working macOS configure:
+#   cmake -S runtime -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DMKW_BUILD_PRODUCTS=OFF
+# and adds the tvOS cross-compile settings on top.
+#
+# This touches no game data (MKW_BUILD_PRODUCTS=OFF). Never put a disc image,
+# extracted game files or translated output in a repo or workflow artifact.
+#
+# Unknowns this run will answer: does Dawn's prebuilt package exist for tvOS,
+# and does SDL3 accept the tvOS toolchain? Read configure.log, then build.log.
+# The job shows green even if a step fails, so check each step and the logs.
+
+name: tvOS probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Environment
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i tv || true
+          cmake --version
+          ninja --version || true
+
+      - name: Install Ninja
+        run: brew install ninja || true
+
+      - name: Configure for tvOS (simulator)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cmake -S runtime -B build-tvos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMKW_BUILD_PRODUCTS=OFF \
+            -DCMAKE_SYSTEM_NAME=tvOS \
+            -DCMAKE_OSX_SYSROOT=appletvsimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            2>&1 | tee configure.log
+
+      - name: Build
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cmake --build build-tvos --config Release 2>&1 | tee build.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-probe-logs
+          path: |
+            configure.log
+            build.log
+          if-no-files-found: ignore
